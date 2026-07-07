@@ -4,7 +4,7 @@ import groq
 import httpx
 
 from .._normalize import VendorExceptionMap, normalize_exception
-from ..exceptions import ProviderRequestError
+from ..exceptions import ProviderResponseValidationError
 from .base import Message
 
 # The one place groq's own exception classes are named. Everything else in
@@ -38,9 +38,9 @@ class GroqProvider:
             )
             content = response.choices[0].message.content
             if content is None:
-                raise ProviderRequestError(self.name, "provider returned no text content")
+                raise ProviderResponseValidationError(self.name, "provider returned no text content")
             return content
-        except ProviderRequestError:
+        except ProviderResponseValidationError:
             raise
         except Exception as exc:
             raise normalize_exception(self.name, exc, _VMAP) from exc

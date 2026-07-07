@@ -12,6 +12,7 @@ from swapllm import (
     GroqProvider,
     ProviderRateLimitError,
     ProviderRequestError,
+    ProviderResponseValidationError,
     ProviderServerError,
     ProviderTimeoutError,
 )
@@ -120,12 +121,12 @@ def test_bad_request_normalizes_to_provider_request_error() -> None:
     assert exc_info.value.provider == "groq"
 
 
-def test_missing_content_normalizes_to_provider_request_error() -> None:
+def test_missing_content_normalizes_to_provider_response_validation_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = _chat_completion_body("placeholder")
         body["choices"][0]["message"]["content"] = None
         return httpx.Response(200, json=body)
 
     provider = _provider(handler)
-    with pytest.raises(ProviderRequestError):
+    with pytest.raises(ProviderResponseValidationError):
         provider.complete([{"role": "user", "content": "hi"}])

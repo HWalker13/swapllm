@@ -64,14 +64,24 @@ class ProviderServerError(ProviderError):
 
 
 class ProviderResponseValidationError(ProviderError):
-    """The provider returned a successful HTTP response, but the content
-    failed schema validation when a ``schema=`` was requested.
+    """The provider returned a successful HTTP response, but the content was
+    unusable.
 
-    Raised by the Router (SPEC.md S4/S4-schema layer), not by adapters -
-    adapters only return raw text and know nothing about the caller's
-    Pydantic schema. Included here because it is still a per-provider failure
-    that belongs in ``AllProvidersFailedError.failures`` alongside the
-    SDK-level errors above.
+    Two distinct raise sites share this type:
+
+    - Adapters raise it directly when the vendor's 200 OK response has no
+      usable text at all (e.g. null ``message.content``) - there is no
+      schema involved yet, the response just isn't a response.
+    - The Router raises it (SPEC.md S4/S4-schema layer) when a ``schema=``
+      was requested and the returned text fails validation against it.
+
+    Ordering guarantee: adapters reject null content before it ever reaches
+    the Router, so the Router's schema-validation branch can assume it always
+    receives non-``None`` text - possibly malformed, never ``None``.
+
+    Per SPEC.md S4, a provider "responding" with garbage isn't success -
+    this must trigger the same failover as rate-limit/timeout/5xx, unlike
+    ``ProviderRequestError``, which deliberately does not fail over.
     """
 
 
