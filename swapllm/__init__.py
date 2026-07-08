@@ -1,8 +1,8 @@
 """swapllm - swap between LLM providers through one interface.
 
-Day 1 scope (SPEC.md S8): provider interface + Groq adapter + exception
-normalization only. Router, OpenAIProvider, and AnthropicProvider land on
-Day 2-3 and are deliberately not exported yet.
+Day 2 scope (SPEC.md S8): OpenAI + Anthropic adapters added alongside Day 1's
+Groq adapter, all three normalized through the same exception taxonomy.
+Router lands on Day 3 and is deliberately not exported yet.
 """
 
 from .exceptions import (
@@ -15,10 +15,12 @@ from .exceptions import (
     ProviderTimeoutError,
     SwapLLMError,
 )
-from .providers import GroqProvider, Message, Provider
+from .providers import AnthropicProvider, GroqProvider, Message, OpenAIProvider, Provider
 
 __all__ = [
     "GroqProvider",
+    "OpenAIProvider",
+    "AnthropicProvider",
     "Message",
     "Provider",
     "SwapLLMError",
