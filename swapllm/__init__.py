@@ -1,8 +1,10 @@
 """swapllm - swap between LLM providers through one interface.
 
-Day 2 scope (SPEC.md S8): OpenAI + Anthropic adapters added alongside Day 1's
-Groq adapter, all three normalized through the same exception taxonomy.
-Router lands on Day 3 and is deliberately not exported yet.
+Day 3 scope (SPEC.md S8): Router adds fallback orchestration on top of Day
+1/2's three normalized adapters - rate-limit/timeout/5xx/invalid-response
+failures advance to the next provider in ``fallback_order``, everything else
+propagates immediately. Schema validation (SPEC.md S3-S4) is Day 4 scope and
+not implemented yet.
 """
 
 from .exceptions import (
@@ -16,6 +18,7 @@ from .exceptions import (
     SwapLLMError,
 )
 from .providers import AnthropicProvider, GroqProvider, Message, OpenAIProvider, Provider
+from .router import Router
 
 __all__ = [
     "GroqProvider",
@@ -23,6 +26,7 @@ __all__ = [
     "AnthropicProvider",
     "Message",
     "Provider",
+    "Router",
     "SwapLLMError",
     "ProviderError",
     "ProviderRateLimitError",
