@@ -12,11 +12,35 @@ immediately without trying any other provider, since switching providers
 would not fix a caller's own misconfiguration or malformed request (SPEC.md
 S4; see also ``swapllm.providers.base.validate_messages``).
 
-Schema validation (SPEC.md S3-S4's optional ``schema=`` param) is Day 4
-scope and is deliberately not implemented here yet.
+Schema validation (SPEC.md S3-S4's optional ``schema=`` param, Day 4 scope):
+when ``complete()`` is called with ``schema=``, a provider's raw text is
+parsed as JSON and validated against it before being returned. A provider
+whose text fails that parse/validate step reuses
+``ProviderResponseValidationError`` - per SPEC.md S4, "a provider
+technically 'responding' with garbage isn't success" applies identically
+whether the garbage is null content (the adapter's own check) or text that
+isn't valid JSON matching ``schema`` (the Router's check) - so it triggers
+the same fallback via the existing ``_RETRYABLE`` set, with no separate
+exception type and no Router control-flow change.
+
+Before validating, a single leading/trailing markdown code fence (` ```json
+`...`\n``` ` or a bare ` ```...\n``` `) is stripped if the provider's *entire*
+text is that one fenced block - see ``_strip_markdown_json_fence``. This is
+narrow on purpose: chat-completion APIs without strict JSON mode routinely
+wrap structured output in a fence, and which vendor does this is exactly the
+kind of per-vendor quirk this package exists to hide (SPEC.md S4's "callers
+can swap providers without the behavior changing for the same input") - but
+text with anything before or after the fence is left untouched and still
+fails validation, since guessing at arbitrary text-around-JSON is a
+different, unbounded problem this does not attempt to solve.
 """
 
 from __future__ import annotations
+
+import re
+from typing import TypeVar
+
+from pydantic import BaseModel, ValidationError
 
 from .exceptions import (
     AllProvidersFailedError,
@@ -27,6 +51,8 @@ from .exceptions import (
     ProviderTimeoutError,
 )
 from .providers import Message, Provider
+
+_SchemaT = TypeVar("_SchemaT", bound=BaseModel)
 
 # The failure classes that mean "this provider, not the request itself, is
 # the problem" - the only ones that trigger fallback to the next provider.
@@ -40,6 +66,19 @@ _RETRYABLE: tuple[type[ProviderError], ...] = (
     ProviderServerError,
     ProviderResponseValidationError,
 )
+
+# Matches only when the *whole* (stripped) text is one fenced block - an
+# optional "json" language tag on the opening fence, then the body, then a
+# closing fence with nothing else around either one. Deliberately not
+# matching a fence anywhere inside a larger string: text before/after the
+# fence means this isn't the narrow "vendor wrapped its JSON in markdown"
+# case this exists for, and should still surface as a validation failure.
+_MARKDOWN_JSON_FENCE_RE = re.compile(r"```(?:json)?[ \t]*\n(.*?)\n```[ \t]*", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_markdown_json_fence(text: str) -> str:
+    match = _MARKDOWN_JSON_FENCE_RE.fullmatch(text.strip())
+    return match.group(1) if match else text
 
 
 class Router:
@@ -67,7 +106,15 @@ class Router:
     What happens if every provider in ``fallback_order`` fails a retryable
     way: ``Router.complete`` raises ``AllProvidersFailedError``, carrying
     one ``ProviderError`` per attempt, in the order each provider was tried
-    (SPEC.md S4) - never a silent ``None`` or empty string.
+    (SPEC.md S4) - never a silent ``None`` or empty string. This applies
+    identically whether the failures are provider-outage failures or, with
+    ``schema=`` given, every provider's text failing schema validation - no
+    separate "everyone failed schema validation" exception exists.
+
+    ``complete()``'s return type depends on whether ``schema=`` is given
+    (SPEC.md S3: "optional - validates before returning"): plain ``str``
+    text when omitted, or the validated ``schema`` instance when provided -
+    never raw unvalidated text alongside a schema request.
 
     ``providers`` and ``fallback_order`` are kept as two separate params
     (matching SPEC.md S3) rather than inferring order from list position:
@@ -106,18 +153,35 @@ class Router:
         self.fallback_order = list(fallback_order)
         self._by_name = by_name
 
-    def complete(self, messages: list[Message]) -> str:
+    def complete(self, messages: list[Message], schema: type[_SchemaT] | None = None) -> str | _SchemaT:
         """Return the first successful completion, trying providers in
         ``fallback_order``.
 
-        What advances to the next provider, what doesn't, and what happens
-        if every provider fails: see the ``Router`` class docstring.
+        With ``schema=`` given, each provider's raw text must parse as JSON
+        and validate against ``schema`` before it counts as success; a
+        provider whose text fails that step is treated the same as any
+        other retryable provider failure (see class docstring) and the
+        Router moves on to the next provider.
+
+        What advances to the next provider, what doesn't, what's returned,
+        and what happens if every provider fails: see the ``Router`` class
+        docstring.
         """
         failures: list[ProviderError] = []
         for name in self.fallback_order:
             provider = self._by_name[name]
             try:
-                return provider.complete(messages)
+                text = provider.complete(messages)
             except _RETRYABLE as exc:
                 failures.append(exc)
+                continue
+
+            if schema is None:
+                return text
+
+            try:
+                return schema.model_validate_json(_strip_markdown_json_fence(text))
+            except ValidationError as exc:
+                failures.append(ProviderResponseValidationError(name, str(exc), original=exc))
+
         raise AllProvidersFailedError(failures)

@@ -23,8 +23,10 @@ from typing import Callable
 
 import httpx
 import pytest
+from pydantic import BaseModel
 
 from swapllm import (
+    AllProvidersFailedError,
     AnthropicProvider,
     GroqProvider,
     OpenAIProvider,
@@ -34,6 +36,7 @@ from swapllm import (
     ProviderResponseValidationError,
     ProviderServerError,
     ProviderTimeoutError,
+    Router,
 )
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -254,3 +257,68 @@ def test_misplaced_system_message_rejected_regardless_of_vendor(spec: _ProviderS
 
     with pytest.raises(ValueError):
         provider.complete(messages)
+
+
+# --- SPEC.md S3-S4/Day 4: Router.complete(schema=...) parses a provider's
+# text as JSON and validates it against a Pydantic model before returning.
+# Schema validation is Router-level, not adapter-level (Provider.complete()
+# always returns unvalidated text - see providers/base.py's Provider
+# docstring), so these tests wrap each spec's provider in a single-provider
+# Router rather than calling provider.complete() directly, while still
+# reusing each spec's vendor-shaped success_body builder to prove the
+# validation behavior is identical no matter which vendor produced the text.
+
+
+class _Recipe(BaseModel):
+    title: str
+    servings: int
+
+
+@pytest.mark.parametrize("spec", _PROVIDER_SPECS, ids=_SPEC_IDS)
+def test_schema_validates_json_response_regardless_of_vendor(spec: _ProviderSpec) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=spec.success_body('{"title": "Soup", "servings": 4}'))
+
+    provider = spec.build(handler)
+    router = Router(providers=[provider], fallback_order=[spec.name])
+
+    result = router.complete([{"role": "user", "content": "hi"}], schema=_Recipe)
+
+    assert result == _Recipe(title="Soup", servings=4)
+
+
+@pytest.mark.parametrize("spec", _PROVIDER_SPECS, ids=_SPEC_IDS)
+def test_schema_validates_markdown_fenced_json_response_regardless_of_vendor(spec: _ProviderSpec) -> None:
+    """Chat-completion APIs without strict JSON mode routinely wrap
+    structured output in a ```json fence - which vendor does this is
+    exactly the kind of quirk the Router's fence-stripping hides, so this
+    must succeed identically to the unfenced case above regardless of
+    vendor (see swapllm.router's module docstring)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        fenced = '```json\n{"title": "Soup", "servings": 4}\n```'
+        return httpx.Response(200, json=spec.success_body(fenced))
+
+    provider = spec.build(handler)
+    router = Router(providers=[provider], fallback_order=[spec.name])
+
+    result = router.complete([{"role": "user", "content": "hi"}], schema=_Recipe)
+
+    assert result == _Recipe(title="Soup", servings=4)
+
+
+@pytest.mark.parametrize("spec", _PROVIDER_SPECS, ids=_SPEC_IDS)
+def test_schema_validation_failure_normalizes_identically_regardless_of_vendor(spec: _ProviderSpec) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=spec.success_body("not valid json"))
+
+    provider = spec.build(handler)
+    router = Router(providers=[provider], fallback_order=[spec.name])
+
+    with pytest.raises(AllProvidersFailedError) as exc_info:
+        router.complete([{"role": "user", "content": "hi"}], schema=_Recipe)
+
+    assert len(exc_info.value.failures) == 1
+    failure = exc_info.value.failures[0]
+    assert isinstance(failure, ProviderResponseValidationError)
+    assert failure.provider == spec.name

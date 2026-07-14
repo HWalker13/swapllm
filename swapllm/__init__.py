@@ -1,10 +1,11 @@
 """swapllm - swap between LLM providers through one interface.
 
-Day 3 scope (SPEC.md S8): Router adds fallback orchestration on top of Day
-1/2's three normalized adapters - rate-limit/timeout/5xx/invalid-response
-failures advance to the next provider in ``fallback_order``, everything else
-propagates immediately. Schema validation (SPEC.md S3-S4) is Day 4 scope and
-not implemented yet.
+Day 4 scope (SPEC.md S8): Router.complete()'s optional ``schema=`` param
+validates a provider's text as JSON against a Pydantic model before
+returning it, reusing Day 1/2's ProviderResponseValidationError so a
+schema-validation failure triggers the same fallback (SPEC.md S4) as
+Day 3's rate-limit/timeout/5xx/invalid-response failures - no separate
+exception type or Router control-flow change needed.
 """
 
 from .exceptions import (

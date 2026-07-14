@@ -14,6 +14,7 @@ from typing import Callable
 
 import httpx
 import pytest
+from pydantic import BaseModel
 
 from swapllm import (
     AllProvidersFailedError,
@@ -22,6 +23,7 @@ from swapllm import (
     OpenAIProvider,
     ProviderRateLimitError,
     ProviderRequestError,
+    ProviderResponseValidationError,
     ProviderServerError,
     Router,
 )
@@ -214,3 +216,94 @@ def test_init_rejects_duplicate_fallback_order_names() -> None:
 
     with pytest.raises(ValueError):
         Router(providers=[groq, openai_provider], fallback_order=["groq", "groq", "openai"])
+
+
+# --- SPEC.md S3-S4/Day 4: Router.complete(schema=...).
+
+
+class _Recipe(BaseModel):
+    title: str
+    servings: int
+
+
+def test_complete_with_schema_returns_validated_model_instance() -> None:
+    groq = _build_groq(_always_ok(_openai_shaped_success_body('{"title": "Soup", "servings": 4}')))
+    openai_provider = _build_openai(_unreachable_handler)
+    anthropic = _build_anthropic(_unreachable_handler)
+
+    router = Router(providers=[groq, openai_provider, anthropic], fallback_order=["groq", "openai", "anthropic"])
+
+    result = router.complete([{"role": "user", "content": "hi"}], schema=_Recipe)
+
+    assert result == _Recipe(title="Soup", servings=4)
+
+
+def test_complete_with_schema_falls_back_to_next_provider_on_validation_failure() -> None:
+    groq = _build_groq(_always_ok(_openai_shaped_success_body("not valid json")))
+    openai_provider = _build_openai(_always_ok(_openai_shaped_success_body('{"title": "Soup", "servings": 4}')))
+    anthropic = _build_anthropic(_unreachable_handler)
+
+    router = Router(providers=[groq, openai_provider, anthropic], fallback_order=["groq", "openai", "anthropic"])
+
+    result = router.complete([{"role": "user", "content": "hi"}], schema=_Recipe)
+
+    assert result == _Recipe(title="Soup", servings=4)
+
+
+def test_complete_with_schema_raises_all_providers_failed_when_every_provider_fails_validation() -> None:
+    groq = _build_groq(_always_ok(_openai_shaped_success_body("not valid json")))
+    openai_provider = _build_openai(_always_ok(_openai_shaped_success_body('{"title": "Soup"}')))
+    anthropic = _build_anthropic(_always_ok(_anthropic_success_body("also not valid json")))
+
+    router = Router(providers=[groq, openai_provider, anthropic], fallback_order=["groq", "openai", "anthropic"])
+
+    with pytest.raises(AllProvidersFailedError) as exc_info:
+        router.complete([{"role": "user", "content": "hi"}], schema=_Recipe)
+
+    failures = exc_info.value.failures
+    assert [f.provider for f in failures] == ["groq", "openai", "anthropic"]
+    for failure in failures:
+        assert isinstance(failure, ProviderResponseValidationError)
+
+
+def test_complete_with_schema_strips_json_tagged_markdown_fence_before_validating() -> None:
+    fenced = '```json\n{"title": "Soup", "servings": 4}\n```'
+    groq = _build_groq(_always_ok(_openai_shaped_success_body(fenced)))
+    openai_provider = _build_openai(_unreachable_handler)
+    anthropic = _build_anthropic(_unreachable_handler)
+
+    router = Router(providers=[groq, openai_provider, anthropic], fallback_order=["groq", "openai", "anthropic"])
+
+    result = router.complete([{"role": "user", "content": "hi"}], schema=_Recipe)
+
+    assert result == _Recipe(title="Soup", servings=4)
+
+
+def test_complete_with_schema_strips_bare_markdown_fence_before_validating() -> None:
+    fenced = '```\n{"title": "Soup", "servings": 4}\n```'
+    groq = _build_groq(_always_ok(_openai_shaped_success_body(fenced)))
+    openai_provider = _build_openai(_unreachable_handler)
+    anthropic = _build_anthropic(_unreachable_handler)
+
+    router = Router(providers=[groq, openai_provider, anthropic], fallback_order=["groq", "openai", "anthropic"])
+
+    result = router.complete([{"role": "user", "content": "hi"}], schema=_Recipe)
+
+    assert result == _Recipe(title="Soup", servings=4)
+
+
+def test_complete_with_schema_does_not_strip_text_surrounding_the_fence() -> None:
+    """The fence-stripping is narrow on purpose: text before/after the
+    fenced block means this isn't the "vendor wrapped its whole JSON reply
+    in markdown" case, and must still surface as a validation failure
+    rather than have swapllm guess at extracting JSON from arbitrary
+    surrounding text."""
+    wrapped = 'Here is the JSON you asked for:\n```json\n{"title": "Soup", "servings": 4}\n```\nHope that helps!'
+    groq = _build_groq(_always_ok(_openai_shaped_success_body(wrapped)))
+
+    router = Router(providers=[groq], fallback_order=["groq"])
+
+    with pytest.raises(AllProvidersFailedError) as exc_info:
+        router.complete([{"role": "user", "content": "hi"}], schema=_Recipe)
+
+    assert isinstance(exc_info.value.failures[0], ProviderResponseValidationError)
