@@ -206,3 +206,11 @@ def test_init_rejects_empty_fallback_order() -> None:
 
     with pytest.raises(ValueError):
         Router(providers=[groq], fallback_order=[])
+
+
+def test_init_rejects_duplicate_fallback_order_names() -> None:
+    groq = _build_groq(_unreachable_handler)
+    openai_provider = _build_openai(_unreachable_handler)
+
+    with pytest.raises(ValueError):
+        Router(providers=[groq, openai_provider], fallback_order=["groq", "groq", "openai"])

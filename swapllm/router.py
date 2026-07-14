@@ -83,6 +83,20 @@ class Router:
         if not fallback_order:
             raise ValueError("fallback_order must contain at least one provider name")
 
+        # Duplicates are rejected here, not just left to "work" by retrying
+        # the same provider instance twice. This isn't a style preference -
+        # it enforces the Day 1 decision, documented on ProviderServerError,
+        # that v1 does no same-provider retry (a rate-limited or 5xx-ing
+        # provider won't fix itself in the next few seconds; SPEC.md S4).
+        # Allowing a duplicate name in fallback_order would let that decision
+        # be silently bypassed through a different mechanism than the one it
+        # was originally about. If same-provider retry is wanted later, it
+        # should be a deliberate v2 feature (e.g. a retry-count param), not
+        # an emergent side effect of unvalidated list contents.
+        duplicates = {name for name in fallback_order if fallback_order.count(name) > 1}
+        if duplicates:
+            raise ValueError(f"fallback_order contains duplicate provider name(s): {sorted(duplicates)}")
+
         by_name = {p.name: p for p in providers}
         unknown = [name for name in fallback_order if name not in by_name]
         if unknown:
