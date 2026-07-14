@@ -65,4 +65,4 @@ Tests are contract tests against mocked provider HTTP responses — no real API 
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/HWalker13/swapllm/blob/main/LICENSE).
