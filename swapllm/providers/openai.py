@@ -5,7 +5,7 @@ import openai
 
 from .._normalize import VendorExceptionMap, normalize_exception
 from ..exceptions import ProviderResponseValidationError
-from .base import Message
+from .base import Message, validate_messages
 
 # The one place openai's own exception classes are named. Everything else in
 # swapllm, including the Router, only ever sees swapllm.exceptions types.
@@ -43,6 +43,7 @@ class OpenAIProvider:
         self._client = openai.OpenAI(api_key=api_key, http_client=http_client)
 
     def complete(self, messages: list[Message]) -> str:
+        validate_messages(messages)
         try:
             response = self._client.chat.completions.create(
                 model=self.model,

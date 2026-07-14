@@ -5,7 +5,7 @@ import httpx
 
 from .._normalize import VendorExceptionMap, normalize_exception
 from ..exceptions import ProviderResponseValidationError
-from .base import Message
+from .base import Message, validate_messages
 
 # The one place anthropic's own exception classes are named. Everything else
 # in swapllm, including the Router, only ever sees swapllm.exceptions types.
@@ -44,6 +44,11 @@ class AnthropicProvider:
         # "system"-role entry inside `messages` - a system-role message left
         # in `messages` is rejected by the API. Split it out here so callers
         # can still pass one Message list shape to every provider.
+        #
+        # validate_messages() already guarantees at most one system message,
+        # and that if present it's at index 0 - _split_system() can assume
+        # that rather than re-deriving it.
+        validate_messages(messages)
         system, conversation = _split_system(messages)
         try:
             response = self._client.messages.create(

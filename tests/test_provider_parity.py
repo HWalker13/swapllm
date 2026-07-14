@@ -38,6 +38,15 @@ from swapllm import (
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
+# Used as the mock transport handler for tests that assert validate_messages()
+# rejects bad input before any adapter builds a vendor request - if rejection
+# ever regresses and an adapter proceeds to make the HTTP call, this fails the
+# test with a clear assertion instead of silently passing or hitting the
+# network.
+_UNREACHABLE_HANDLER: Handler = lambda request: (_ for _ in ()).throw(  # noqa: E731
+    AssertionError("validate_messages() should reject the input before any HTTP call is made")
+)
+
 
 # --- Groq/OpenAI share the OpenAI-compatible chat.completion response shape;
 # Anthropic's Message shape is structurally different (content is a list of
@@ -220,3 +229,28 @@ def test_missing_content_normalizes_identically_regardless_of_vendor(spec: _Prov
         provider.complete([{"role": "user", "content": "hi"}])
 
     assert exc_info.value.provider == spec.name
+
+
+@pytest.mark.parametrize("spec", _PROVIDER_SPECS, ids=_SPEC_IDS)
+def test_multiple_system_messages_rejected_regardless_of_vendor(spec: _ProviderSpec) -> None:
+    provider = spec.build(_UNREACHABLE_HANDLER)
+    messages = [
+        {"role": "system", "content": "be nice"},
+        {"role": "system", "content": "be extra nice"},
+        {"role": "user", "content": "hi"},
+    ]
+
+    with pytest.raises(ValueError):
+        provider.complete(messages)
+
+
+@pytest.mark.parametrize("spec", _PROVIDER_SPECS, ids=_SPEC_IDS)
+def test_misplaced_system_message_rejected_regardless_of_vendor(spec: _ProviderSpec) -> None:
+    provider = spec.build(_UNREACHABLE_HANDLER)
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "system", "content": "be nice"},
+    ]
+
+    with pytest.raises(ValueError):
+        provider.complete(messages)

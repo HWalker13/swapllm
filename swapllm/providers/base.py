@@ -25,6 +25,39 @@ class Message(TypedDict):
     content: str
 
 
+def validate_messages(messages: list[Message]) -> None:
+    """Reject message shapes a vendor SDK would otherwise handle inconsistently.
+
+    Anthropic's Messages API takes `system` as a separate top-level field, so
+    an adapter has to pull system-role entries out of `messages` itself
+    (see AnthropicProvider._split_system). Groq/OpenAI's OpenAI-compatible
+    endpoints have no such extraction step and would just pass multiple or
+    misplaced system-role entries straight through to the vendor - meaning
+    the same input (two system messages, or one not at index 0) would
+    silently behave differently per provider. That breaks the one guarantee
+    this package exists to provide: callers can swap providers without the
+    behavior changing for the same input (SPEC.md S4).
+
+    It lives here in the shared base module, and every adapter calls it
+    identically as the first line of ``complete()``, precisely so callers get
+    the same rejection behavior regardless of provider - duplicating this
+    check into each adapter instead would let the three copies drift apart
+    over time, which is the exact failure mode this function exists to rule
+    out.
+
+    A caller-input error, not a vendor failure - deliberately a plain
+    ValueError rather than a ProviderError subclass, since it must NOT
+    trigger Router fallback the way a vendor failure does (misplaced system
+    messages are not a provider outage, and failing over would just retry
+    the same bad input against the next provider).
+    """
+    system_count = sum(1 for m in messages if m["role"] == "system")
+    if system_count > 1:
+        raise ValueError("multiple system messages are not supported")
+    if system_count == 1 and messages[0]["role"] != "system":
+        raise ValueError("a system message must be the first message")
+
+
 @runtime_checkable
 class Provider(Protocol):
     """A single LLM provider adapter.
