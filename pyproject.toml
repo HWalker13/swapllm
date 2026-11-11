@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "swapllm"
-version = "0.1.0"
+version = "0.1.1"
 description = "Swap between LLM providers (Groq, OpenAI, Anthropic) through one interface, with automatic fallback and optional schema validation."
 readme = "README.md"
 license = { text = "MIT" }

@@ -36,7 +36,10 @@ class AnthropicProvider:
     ) -> None:
         self.model = model
         self.max_tokens = max_tokens
-        self._client = anthropic.Anthropic(api_key=api_key, http_client=http_client)
+        # max_retries=0: the SDK would otherwise retry 429s, 5xx and timeouts itself (twice, with
+        # backoff) before swapLLM ever sees the failure, which delays fallback by seconds and
+        # contradicts the README's "no same-provider retry". Fallback is the retry strategy.
+        self._client = anthropic.Anthropic(api_key=api_key, http_client=http_client, max_retries=0)
 
     def complete(self, messages: list[Message]) -> str:
         # Unlike Groq/OpenAI's OpenAI-compatible shape, Anthropic's Messages

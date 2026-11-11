@@ -40,7 +40,10 @@ class OpenAIProvider:
         http_client: httpx.Client | None = None,
     ) -> None:
         self.model = model
-        self._client = openai.OpenAI(api_key=api_key, http_client=http_client)
+        # max_retries=0: the SDK would otherwise retry 429s, 5xx and timeouts itself (twice, with
+        # backoff) before swapLLM ever sees the failure, which delays fallback by seconds and
+        # contradicts the README's "no same-provider retry". Fallback is the retry strategy.
+        self._client = openai.OpenAI(api_key=api_key, http_client=http_client, max_retries=0)
 
     def complete(self, messages: list[Message]) -> str:
         validate_messages(messages)
